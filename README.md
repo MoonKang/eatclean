@@ -55,7 +55,7 @@ If there is no database anywhere yet, add `ALLOW_EMPTY_START=1` to
 ## CI/CD (GitHub Actions)
 
 - **CI** (`.github/workflows/ci.yml`) runs on pull requests and non-main branches:
-  unit tests on Python 3.9 and 3.12, ShellCheck, a JavaScript syntax check,
+  unit tests on Python 3.11 and 3.14, ShellCheck, a JavaScript syntax check,
   and a build and smoke test of the collector container.
 - **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main`: it runs CI,
   then rebuilds the Cloud Run Job and publishes the web app's HTML, JS and CSS.
