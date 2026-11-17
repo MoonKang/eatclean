@@ -20,6 +20,8 @@ PROVIDER="github-actions"
 DEPLOY_SA_NAME="github-deployer"
 DEPLOY_SA="${DEPLOY_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 RUNTIME_SA="inspection-collector@${PROJECT_ID}.iam.gserviceaccount.com"
+JOB="inspection-collector"
+IMAGE_REPO="inspection-map"
 
 cd "$(dirname "$0")/.."
 gcloud config set project "$PROJECT_ID"
@@ -72,10 +74,26 @@ retry gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" \
   >/dev/null
 
 # What a source deploy of the Cloud Run Job needs.
-for role in roles/run.sourceDeveloper roles/serviceusage.serviceUsageConsumer; do
-  retry gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:$DEPLOY_SA" --role="$role" --condition=None >/dev/null
-done
+# The deploy workflow builds the image on GitHub's runner and pushes it to this
+# registry, so the deployer never needs Cloud Build or the broad default compute account.
+gcloud services enable artifactregistry.googleapis.com
+gcloud artifacts repositories describe "$IMAGE_REPO" --location="$REGION" >/dev/null 2>&1 ||
+  gcloud artifacts repositories create "$IMAGE_REPO" --location="$REGION" \
+    --repository-format=docker --description="Collector job images"
+
+# Narrow grants: push to that one registry, update that one job.
+retry gcloud artifacts repositories add-iam-policy-binding "$IMAGE_REPO" --location="$REGION" \
+  --member="serviceAccount:$DEPLOY_SA" --role=roles/artifactregistry.writer >/dev/null
+retry gcloud run jobs add-iam-policy-binding "$JOB" --region="$REGION" \
+  --member="serviceAccount:$DEPLOY_SA" --role=roles/run.developer >/dev/null
+# Lets gcloud calls made as the deployer count against this project's quota.
+retry gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOY_SA" --role=roles/serviceusage.serviceUsageConsumer \
+  --condition=None >/dev/null
+# Earlier versions of this script granted project-wide source deploys; remove that if present.
+gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$DEPLOY_SA" --role=roles/run.sourceDeveloper \
+  --condition=None >/dev/null 2>&1 || true
 # The deployer may attach the collector's identity to the job, but cannot act as it otherwise.
 retry gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   --member="serviceAccount:$DEPLOY_SA" --role=roles/iam.serviceAccountUser >/dev/null
@@ -89,6 +107,7 @@ gh variable set GCP_REGION       --repo "$REPO" --body "$REGION"
 gh variable set GCP_WIF_PROVIDER --repo "$REPO" --body "$WIF_PROVIDER"
 gh variable set GCP_DEPLOY_SA    --repo "$REPO" --body "$DEPLOY_SA"
 gh variable set SITE_BUCKET      --repo "$REPO" --body "$SITE_BUCKET"
+gh variable set GCP_IMAGE_REPO   --repo "$REPO" --body "${REGION}-docker.pkg.dev/${PROJECT_ID}/${IMAGE_REPO}"
 
 cat <<EOF
 

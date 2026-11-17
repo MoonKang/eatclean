@@ -50,9 +50,20 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
-      - name: Rebuild the collector job
-        # Flags not given here (buckets, memory, timeout, service account) keep the values setup.sh set.
-        run: gcloud run jobs deploy "$JOB" --source . --region "$REGION" --quiet
+      - name: Build and push the collector image
+        # Built here on GitHub's runner rather than Cloud Build, so the deployer only
+        # needs to push to one registry and update one job.
+        env:
+          IMAGE: ${{ vars.GCP_IMAGE_REPO }}/collector:${{ github.sha }}
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --tag "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Point the collector job at the new image
+        # Other settings (buckets, memory, timeout, service account) keep the values setup.sh set.
+        run: gcloud run jobs update "$JOB" --image "$IMAGE" --region "$REGION" --quiet
 
       - name: Publish the web app
         # Copies code files only. Map data under data/ is written by the collector job and left alone.
