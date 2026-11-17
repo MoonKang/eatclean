@@ -80,6 +80,10 @@ gcloud services enable artifactregistry.googleapis.com
 gcloud artifacts repositories describe "$IMAGE_REPO" --location="$REGION" >/dev/null 2>&1 ||
   gcloud artifacts repositories create "$IMAGE_REPO" --location="$REGION" \
     --repository-format=docker --description="Collector job images"
+# Keep the 15 newest image versions (a push from GitHub creates about 3: index,
+# image, provenance), and delete anything else older than 7 days.
+gcloud artifacts repositories set-cleanup-policies "$IMAGE_REPO" --location="$REGION" \
+  --policy=deploy/image-cleanup-policy.json --no-dry-run >/dev/null
 
 # Narrow grants: push to that one registry, update that one job.
 retry gcloud artifacts repositories add-iam-policy-binding "$IMAGE_REPO" --location="$REGION" \

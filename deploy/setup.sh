@@ -92,6 +92,10 @@ gcloud run jobs deploy "$JOB" \
   --task-timeout 24h \
   --max-retries 0
 
+# Source deploys store images in this repository; apply the same cleanup as for CI images.
+gcloud artifacts repositories set-cleanup-policies cloud-run-source-deploy --location="$REGION" \
+  --policy=deploy/image-cleanup-policy.json --no-dry-run >/dev/null
+
 echo "== Daily schedule"
 retry gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" \
   --member="serviceAccount:$SA" --role=roles/run.invoker >/dev/null
