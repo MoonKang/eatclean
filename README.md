@@ -51,3 +51,27 @@ gcloud run jobs execute inspection-collector --region us-east1 --update-env-vars
 
 If there is no database anywhere yet, add `ALLOW_EMPTY_START=1` to
 `--update-env-vars` for the first run only.
+
+## CI/CD (GitHub Actions)
+
+- **CI** (`.github/workflows/ci.yml`) runs on pull requests and non-main branches:
+  unit tests on Python 3.9 and 3.12, ShellCheck, a JavaScript syntax check,
+  and a build and smoke test of the collector container.
+- **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main`: it runs CI,
+  then rebuilds the Cloud Run Job and publishes the web app's HTML, JS and CSS.
+  It never runs the collector; the daily schedule does that.
+
+Deploys are skipped until the repo is connected to Google Cloud. After `deploy/setup.sh`:
+
+```bash
+PROJECT_ID=my-project bash deploy/github-setup.sh
+```
+
+This uses Workload Identity Federation, so no Google keys are stored in GitHub.
+Only workflow runs from this repo's `main` branch can deploy.
+
+Run the tests locally:
+
+```bash
+python3 -m unittest discover -s tests -v
+```

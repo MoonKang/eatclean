@@ -110,7 +110,7 @@ def main():
 
     dates = [r["last_inspection_date"] for r in rows if r["last_inspection_date"]]
     meta = {
-        "generated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "facilities": len(rows),
         "mapped": len(features),
         "not_geocoded": len(rows) - len(features),

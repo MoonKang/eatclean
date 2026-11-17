@@ -1,0 +1,72 @@
+name: Deploy
+
+# On every push to main: run CI, then
+#   1. rebuild the collector image and point the Cloud Run Job at it
+#      (the next scheduled run uses the new code), and
+#   2. publish the web app's HTML, JS and CSS so front-end changes go live now.
+# It never runs the collector itself; the daily Cloud Scheduler trigger does that.
+#
+# Deploy steps are skipped until the GCP_* repository variables exist.
+# deploy/github-setup.sh creates them.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never interrupt a deploy halfway
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to Google Cloud
+    needs: ci
+    if: vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write   # lets GitHub prove its identity to Google; no stored keys
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      JOB: inspection-collector
+      SITE_BUCKET: ${{ vars.SITE_BUCKET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Rebuild the collector job
+        # Flags not given here (buckets, memory, timeout, service account) keep the values setup.sh set.
+        run: gcloud run jobs deploy "$JOB" --source . --region "$REGION" --quiet
+
+      - name: Publish the web app
+        # Copies code files only. Map data under data/ is written by the collector job and left alone.
+        run: |
+          gcloud storage cp web/index.html web/app.js web/style.css "gs://${SITE_BUCKET}/" \
+            --cache-control="public, max-age=300"
+          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Site: https://storage.googleapis.com/${SITE_BUCKET}/index.html" >> "$GITHUB_STEP_SUMMARY"
+
+  not-configured:
+    name: Deploy skipped
+    needs: ci
+    if: vars.GCP_PROJECT_ID == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::Deploy skipped: GCP_PROJECT_ID is not set. Run deploy/github-setup.sh to connect this repo to Google Cloud."

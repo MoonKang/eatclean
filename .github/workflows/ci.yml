@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]   # main is tested by the deploy workflow, which calls this one
+  workflow_call:              # lets deploy.yml run these checks before deploying
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python tests (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]   # 3.9 matches macOS's system Python; 3.12 a current release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile every module
+        run: python -m compileall -q collector tests serve.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+  lint:
+    name: Shell, JavaScript and JSON checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ShellCheck
+        run: shellcheck deploy/*.sh
+      - name: JavaScript syntax
+        run: node --check web/app.js
+      - name: JSON syntax
+        run: |
+          for f in deploy/*.json .claude/launch.json; do
+            python3 -m json.tool "$f" > /dev/null && echo "ok  $f"
+          done
+
+  container:
+    name: Container builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the collector image
+        run: docker build --tag collector:ci .
+      - name: Smoke test the image
+        run: |
+          docker run --rm --entrypoint python3 collector:ci -c \
+            "import sys; sys.path.insert(0, '/app/collector'); import collect, collect_history, geocode, export; print('imports ok')"
+          # Without its bucket settings, the job must refuse to start.
+          if docker run --rm collector:ci; then
+            echo "entrypoint should fail when DATA_BUCKET is missing" >&2
+            exit 1
+          fi

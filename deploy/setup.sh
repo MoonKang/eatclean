@@ -26,6 +26,18 @@ SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 cd "$(dirname "$0")/.."
 gcloud config set project "$PROJECT_ID"
 
+# A new service account takes a short while before IAM recognizes it, so retry
+# commands that grant it access.
+retry() {
+  local n
+  for n in 1 2 3 4 5 6; do
+    if "$@"; then return 0; fi
+    echo "  (attempt $n failed; retrying in $((n * 5))s)" >&2
+    sleep $((n * 5))
+  done
+  "$@"
+}
+
 echo "== Enabling APIs"
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   cloudscheduler.googleapis.com artifactregistry.googleapis.com storage.googleapis.com
@@ -45,9 +57,12 @@ echo "== Service account"
 gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 ||
   gcloud iam service-accounts create "$SA_NAME" --display-name="Inspection map collector"
 for b in "$DATA_BUCKET" "$SITE_BUCKET"; do
-  gcloud storage buckets add-iam-policy-binding "gs://$b" \
+  retry gcloud storage buckets add-iam-policy-binding "gs://$b" \
     --member="serviceAccount:$SA" --role=roles/storage.objectAdmin >/dev/null
 done
+# `gcloud storage rsync` also reads the bucket's own metadata (storage.buckets.get).
+retry gcloud storage buckets add-iam-policy-binding "gs://$SITE_BUCKET" \
+  --member="serviceAccount:$SA" --role=roles/storage.legacyBucketReader >/dev/null
 
 echo "== Database"
 if gcloud storage ls "gs://$DATA_BUCKET/inspections.db" >/dev/null 2>&1; then
@@ -58,6 +73,14 @@ elif [[ -f data/inspections.db ]]; then
 else
   echo "No local database to seed. Start the first run with ALLOW_EMPTY_START=1 (see README)."
 fi
+
+echo "== Build permissions"
+# Source deploys build the container with Cloud Build, which runs as the default
+# compute service account in new projects; it needs the Cloud Run Builder role.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role=roles/run.builder --condition=None >/dev/null
 
 echo "== Cloud Run Job (builds the container with Cloud Build)"
 gcloud run jobs deploy "$JOB" \
@@ -70,7 +93,7 @@ gcloud run jobs deploy "$JOB" \
   --max-retries 0
 
 echo "== Daily schedule"
-gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" \
+retry gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" \
   --member="serviceAccount:$SA" --role=roles/run.invoker >/dev/null
 RUN_URI="https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB}:run"
 if gcloud scheduler jobs describe "${JOB}-daily" --location "$REGION" >/dev/null 2>&1; then

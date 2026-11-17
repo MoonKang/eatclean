@@ -124,7 +124,7 @@ def main():
                 print("page %d is empty: end of list" % page)
                 break
 
-            now = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             results = [upsert(conn, parse_facility(r), now) for r in rows]
             conn.commit()
             for r in results:
