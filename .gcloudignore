@@ -1,0 +1,10 @@
+.git
+.gitignore
+.claude/
+data/
+web/data/
+__pycache__/
+*.pyc
+.DS_Store
+README.md
+serve.py
