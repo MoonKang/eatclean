@@ -300,3 +300,15 @@ html, body {
 }
 .cat-filter button:hover { background: var(--border); }
 #results li.cat-hit { font-weight: 600; }
+
+/* score change since the previous inspection */
+.popup .trend { margin-top: 4px; font-size: 12px; }
+.popup .trend.up { color: var(--grade-a); }
+.popup .trend.down { color: var(--grade-u); }
+.popup .trend.same { color: var(--muted); }
+.popup .actions { flex-wrap: wrap; gap: 6px; }
+.popup .actions .more { padding: 5px 9px; }
+
+/* likely-closed toggle */
+.stale { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.stale input { margin: 0; }

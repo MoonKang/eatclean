@@ -63,6 +63,22 @@ def export_history(conn, facility_ids):
     return count, len(shards)
 
 
+def previous_scores(conn):
+    """{facility_id: (date, score)} of the second most recent scored inspection.
+
+    Inspections on the same day as the latest (e.g. a same-day follow-up) are skipped.
+    """
+    out, latest = {}, {}
+    rows = conn.execute("SELECT facility_id, date, score FROM inspections"
+                        " WHERE score IS NOT NULL AND date IS NOT NULL ORDER BY facility_id, date DESC")
+    for fid, date, score in rows:
+        if fid not in latest:
+            latest[fid] = date
+        elif fid not in out and date < latest[fid]:
+            out[fid] = (date, score)
+    return out
+
+
 def grade(score):
     """Georgia food service letter grades."""
     if score is None:
@@ -147,9 +163,25 @@ def main():
     cats = osm.categories(conn, [(f["properties"]["id"], f["properties"]["name"],
                                   f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0])
                                  for f in features])
+    # Otherwise a category from the name itself ("TAQUERIA ..." -> Mexican, chains, schools).
+    from_name = 0
     for f in features:
-        if f["properties"]["id"] in cats:
-            f["properties"]["cat"] = cats[f["properties"]["id"]]
+        fid = f["properties"]["id"]
+        if fid not in cats:
+            c = osm.name_category(f["properties"]["name"])
+            if c:
+                cats[fid] = c
+                from_name += 1
+        if fid in cats:
+            f["properties"]["cat"] = cats[fid]
+
+    # The inspection before the latest one, so the map can show "up from 64".
+    prev = previous_scores(conn)
+    for f in features:
+        p = f["properties"]
+        before = prev.get(p["id"])
+        if before and p["date"] and before[0] < p["date"]:
+            p["prev"], p["prev_date"] = before[1], before[0]
 
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(os.path.join(OUT_DIR, "facilities.geojson"), "w") as f:
@@ -178,7 +210,8 @@ def main():
     n_insp, n_files = export_history(conn, {f["properties"]["id"] for f in features})
     print("wrote %d past inspections to %d files in web/data/history/" % (n_insp, n_files))
     print("wrote %d of %d facilities to web/data/facilities.geojson" % (len(features), len(rows)))
-    print("categories from OpenStreetMap: %d of %d mapped facilities" % (len(cats), len(features)))
+    print("categories: %d of %d mapped facilities (%d from OpenStreetMap, %d from the name)"
+          % (len(cats), len(features), len(cats) - from_name, from_name))
     print("counties with data: %d of %d; without: %s"
           % (meta["counties_covered"], len(coverage["features"]),
              ", ".join(uncovered) if len(uncovered) <= 12 else "%d counties" % len(uncovered)))

@@ -27,7 +27,7 @@
       <ul id="results" hidden></ul>
     </div>
     <div id="cat-filter" class="cat-filter" hidden
-         title="Categories come from OpenStreetMap and are known for about 1 in 5 restaurants">
+         title="Categories come from OpenStreetMap or the restaurant's name, and are known for about half of restaurants">
       <span>🍽 <span class="cat-name"></span> · <span class="cat-count"></span> places</span>
       <button type="button" aria-label="Clear category">×</button>
     </div>
@@ -35,6 +35,10 @@
     <label class="month">
       <span>Last inspected</span>
       <select id="month"><option value="">Any month</option></select>
+    </label>
+    <label class="stale" title="Places with no inspection in 18 months have probably closed">
+      <input type="checkbox" id="show-stale">
+      <span>Show places not inspected in 18+ months (<span id="stale-count">…</span>)</span>
     </label>
     <p class="meta" id="meta">Loading inspections…</p>
   </div>

@@ -282,6 +282,14 @@ class OsmCategories(unittest.TestCase):
         self.assertEqual(osm.label("fast_food", None), "Fast food")
         self.assertIsNone(osm.label("restaurant", None))
 
+    def test_name_categories(self):
+        cases = {"TAQUERIA LOS HERMANOS INC": "Mexican", "PHO 24": "Vietnamese", "Phoenix Roasters": None,
+                 "JENKINS ELEMENTARY SCHOOL": "School", "WAFFLE HOUSE #1915": "Breakfast",
+                 "Chick-fil-A FSU #4423": "Chicken", "Brick Oven Pizzeria": "Pizza",
+                 "College Park Grill": None, "Thai Palace": "Thai", "Thaitanic": None}
+        for name, want in cases.items():
+            self.assertEqual(osm.name_category(name), want, name)
+
     def test_match_by_name_and_distance(self):
         conn = sqlite3.connect(":memory:")
         conn.executescript(osm.SCHEMA)

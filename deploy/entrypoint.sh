@@ -71,9 +71,16 @@ python3 collector/osm.py
 python3 collector/export.py
 
 # Publish only after every step succeeded.
+# Code files by rsync; map data separately below (rsync can't store it compressed).
 gcloud storage rsync web "gs://${SITE_BUCKET}" \
   --recursive \
+  --exclude="^data/" \
   --delete-unmatched-destination-objects \
+  --cache-control="public, max-age=300"
+# Map data stored gzip-compressed (Content-Encoding: gzip): facilities.geojson
+# drops from ~5.6 MB to ~1 MB. Browsers decompress it transparently.
+gcloud storage cp -r web/data "gs://${SITE_BUCKET}/" \
+  --gzip-local=json,geojson \
   --cache-control="public, max-age=300"
 
 echo "Site published to https://storage.googleapis.com/${SITE_BUCKET}/index.html"

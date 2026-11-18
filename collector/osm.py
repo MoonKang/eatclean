@@ -190,3 +190,90 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- categories from the name ----------------------------------------------
+# Used when OpenStreetMap has no match. Checked in order; the first rule whose
+# pattern appears as whole words in the (normalized) name wins. Chains first,
+# then institutions, then cuisine words. Kept deliberately conservative.
+NAME_RULES = [
+    # chains
+    (r"mcdonalds|burger king|wendys|krystal|checkers|rallys|culvers|whataburger|five guys|"
+     r"steak n shake|cook out|hardees|sonic drive in|freddys|smashburger|wayback burgers|"
+     r"burgerfi|red robin", "Burger"),
+    (r"chick fil a|zaxbys|popeyes|kfc|kentucky fried chicken|bojangles|churchs chicken|"
+     r"raising canes|wingstop|huey magoos|el pollo loco|pollo campero", "Chicken"),
+    (r"subway|jersey mikes|jimmy johns|firehouse subs|arbys|jasons deli|schlotzskys|"
+     r"potbelly|which wich|mcalisters", "Sandwich"),
+    (r"pizza hut|dominos|papa johns|little caesars|marcos pizza|jets pizza|papa murphys|"
+     r"blaze pizza|mellow mushroom", "Pizza"),
+    (r"taco bell|chipotle|moes southwest|qdoba|willys mexicana|taco mac", "Mexican"),
+    (r"waffle house|huddle house|ihop|first watch|cracker barrel|denny|another broken egg", "Breakfast"),
+    (r"starbucks|dunkin|caribou coffee|dutch bros|7 brew|seven brew|ziggis", "Coffee shop"),
+    (r"krispy kreme|shipley", "Donut"),
+    (r"dairy queen|brusters|baskin robbins|cold stone|marble slab|ritas|jeremiahs", "Ice cream"),
+    (r"smoothie king|tropical smoothie|planet smoothie|playa bowls", "Juice"),
+    (r"longhorn|outback|texas roadhouse|ruth s chris|fogo de chao|teds montana", "Steak house"),
+    (r"red lobster|captain ds|long john silver|juicy crab|hook and reel", "Seafood"),
+    (r"olive garden|carrabbas|maggianos", "Italian"),
+    (r"panda express", "Chinese"),
+    (r"golden corral", "Buffet"),
+    (r"applebees|chilis|ruby tuesday|millers ale house|tgi friday", "American"),
+    # institutions
+    (r"elementary|middle school|high school|primary school|charter school|academy|"
+     r"school", "School"),
+    (r"hospital|medical center", "Hospital"),
+    (r"detention|jail|correctional|prison", "Jail"),
+    (r"senior living|assisted living|nursing|rehabilitation|health care center|"
+     r"healthcare center|memory care|retirement", "Senior living"),
+    # cuisine words
+    (r"korean|bibimbap|tofu house|bulgogi|kbbq", "Korean"),
+    (r"pho|banh mi|vietnamese", "Vietnamese"),
+    (r"sushi|ramen|hibachi|izakaya|teriyaki|japanese|tsukemen|udon", "Japanese"),
+    (r"thai", "Thai"),
+    (r"chinese|szechuan|sichuan|dim sum|dimsum|hot pot|wok|dumpling", "Chinese"),
+    (r"indian|curry|tandoor|tandoori|biryani|masala|dosa", "Indian"),
+    (r"taqueria|tacos?|mexican|cantina|burrito|mexicana|tamales", "Mexican"),
+    (r"pupuseria|salvadorena|salvadoran", "Salvadoran"),
+    (r"jamaican|caribbean|jerk", "Caribbean"),
+    (r"cuban", "Cuban"),
+    (r"peruvian|peru", "Peruvian"),
+    (r"colombian|colombiana|arepa|arepas", "Colombian"),
+    (r"mediterranean|gyros?|kabobs?|kebabs?|shawarma|falafel|halal", "Mediterranean"),
+    (r"greek", "Greek"),
+    (r"ethiopian", "Ethiopian"),
+    (r"italian|pasta|trattoria|ristorante", "Italian"),
+    (r"pizza|pizzeria", "Pizza"),
+    (r"bbq|barbecue|barbeque|smokehouse", "Barbecue"),
+    (r"burgers?", "Burger"),
+    (r"wings?|chicken", "Chicken"),
+    (r"seafood|crab|crawfish|oyster|fish", "Seafood"),
+    (r"steakhouse|steak house", "Steak house"),
+    (r"donuts?|doughnuts?", "Donut"),
+    (r"bakery|panaderia|bake shop|cake", "Bakery"),
+    (r"ice cream|creamery|gelato|frozen custard|paleteria|italian ice|froyo|frozen yogurt", "Ice cream"),
+    (r"boba|bubble tea|tea house", "Bubble tea"),
+    (r"smoothie|juice", "Juice"),
+    (r"coffee|espresso|cafe latte", "Coffee shop"),
+    (r"deli|subs|sandwich|sandwiches", "Sandwich"),
+    (r"breakfast|brunch|pancake|waffle|diner", "Breakfast"),
+    (r"buffet", "Buffet"),
+]
+_NAME_RULES = [(re.compile(r"(?:^| )(?:%s)(?: |$)" % pat), label) for pat, label in NAME_RULES]
+
+
+def name_category(name):
+    """A category from words in the name, or None: 'TAQUERIA LOS HERMANOS' -> 'Mexican'."""
+    text = " ".join(words_all(name))
+    for rx, label in _NAME_RULES:
+        if rx.search(text):
+            return label
+    return None
+
+
+def words_all(s):
+    """Like words(), but keeps every word (no stop list): rules need 'the', 'and' etc."""
+    s = unicodedata.normalize("NFD", s or "")
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower().replace("&", " and ")
+    s = re.sub(r"['’]", "", s)
+    return re.sub(r"[^a-z0-9 ]", " ", s).split()

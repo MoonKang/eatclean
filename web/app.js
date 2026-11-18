@@ -13,6 +13,13 @@
 
   var all = [];
   var month = '';          // 'yyyy-mm' or '' for any
+  var showStale = false;   // places not inspected in STALE_MONTHS are probably closed
+  var STALE_MONTHS = 18;
+  var staleBefore = (function () {
+    var d = new Date(); d.setMonth(d.getMonth() - STALE_MONTHS);
+    return d.toISOString().slice(0, 10);
+  })();
+  function isStale(p) { return !!p.date && p.date < staleBefore; }
   var category = '';       // e.g. 'Korean', or '' for any (from OpenStreetMap, see collector/osm.py)
   var historyCache = {};   // bucket number -> promise of {facilityId: [inspections]}
   var active = { A: true, B: true, C: true, U: true, '': true };
@@ -36,6 +43,7 @@
       var p = f.properties;
       if (!active[p.grade]) return false;
       if (category && (p.cat || '').split(', ').indexOf(category) === -1) return false;
+      if (!showStale && !month && isStale(p)) return false;
       return !month || (p.date || '').slice(0, 7) === month;
     });
   }
@@ -50,6 +58,13 @@
     var badge = el('span', 'badge', has ? String(score) : '–');
     badge.style.background = COLOR[has ? gradeOf(Number(score)) : ''];
     return badge;
+  }
+
+  function setupStaleToggle() {
+    var box = document.getElementById('show-stale');
+    var n = all.filter(function (f) { return isStale(f.properties); }).length;
+    document.getElementById('stale-count').textContent = n.toLocaleString();
+    box.addEventListener('change', function () { showStale = box.checked; updateMenuDot(); refresh(); });
   }
 
   function buildMonthSelect() {
@@ -111,8 +126,11 @@
     }
     var points = v.reduce(function (sum, x) { return sum + (x.points || 0); }, 0);
     var details = el('details');
-    details.appendChild(el('summary', null,
-      v.length + (v.length === 1 ? ' violation' : ' violations') + (points ? ' · ' + points + ' points' : '')));
+    var summary = el('summary', null,
+      v.length + (v.length === 1 ? ' violation' : ' violations') + (points ? ' · ' + points + ' points' : ''));
+    var repeats = v.filter(function (x) { return x.repeat; }).length;
+    if (repeats) summary.appendChild(el('span', 'tag tag-repeat', repeats + ' repeat'));
+    details.appendChild(summary);
     var ul = el('ul', 'viols');
     v.forEach(function (x) {
       var li = el('li');
@@ -187,9 +205,9 @@
     box.appendChild(el('h2', null, p.name));
     box.appendChild(el('div', 'addr', p.address));
     if (p.cat) {
-      // Category matched from OpenStreetMap by name and location (see collector/osm.py).
+      // From OpenStreetMap (matched by name and location) or the name itself; see collector/osm.py.
       var cat = el('div', 'cat', p.cat);
-      cat.title = 'Category from OpenStreetMap';
+      cat.title = 'Category from OpenStreetMap or the restaurant\'s name';
       box.appendChild(cat);
     }
 
@@ -198,6 +216,12 @@
     row.appendChild(el('span', null, p.grade ? 'Grade ' + p.grade : 'No score'));
     row.appendChild(el('span', 'when', '· ' + formatDate(p.date)));
     box.appendChild(row);
+    if (p.prev != null && p.score != null && p.score !== '') {
+      var d = Number(p.score) - Number(p.prev);
+      var trend = el('div', 'trend ' + (d > 0 ? 'up' : d < 0 ? 'down' : 'same'),
+        (d > 0 ? '↑ Up from ' : d < 0 ? '↓ Down from ' : '= Same as ') + p.prev + ' on ' + formatDate(p.prev_date));
+      box.appendChild(trend);
+    }
     if (p.src === 'gnr') {
       box.appendChild(el('div', 'src-note', 'From GNR Public Health, copied by hand. May be out of date.'));
     }
@@ -215,10 +239,14 @@
     g.rel = 'noopener';
     g.title = 'Reviews, photos and hours on Google Maps';
     actions.appendChild(g);
+    var share = el('button', 'more share', 'Share');
+    share.type = 'button';
+    share.addEventListener('click', function () { shareRestaurant(feature, share); });
+    actions.appendChild(share);
     box.appendChild(actions);
 
     if (popup) popup.remove();
-    popup = new maplibregl.Popup({ offset: 12, maxWidth: '300px' })
+    popup = new maplibregl.Popup({ offset: 12, maxWidth: '340px' })
       .setLngLat(feature.geometry.coordinates)
       .setDOMContent(box)
       .addTo(map);
@@ -329,10 +357,11 @@
   }
 
   // Centre a point in the part of the map the side panel doesn't cover.
-  function flyToVisible(lngLat) {
+  function flyToVisible(lngLat, instant) {
     var panel = document.querySelector('.panel');
-    var wide = panel && window.innerWidth - panel.offsetWidth > 360;
-    map.flyTo({ center: lngLat, zoom: 16, offset: [wide ? (panel.offsetWidth + 12) / 2 : 0, 40] });
+    var wide = panel && panel.offsetWidth && window.innerWidth - panel.offsetWidth > 360;
+    var opts = { center: lngLat, zoom: 16, offset: [wide ? (panel.offsetWidth + 12) / 2 : 0, 40] };
+    if (instant) map.easeTo(Object.assign(opts, { duration: 0 })); else map.flyTo(opts);
   }
 
   // --- phone menu -------------------------------------------------------------
@@ -386,12 +415,54 @@
   }
   document.querySelector('#cat-filter button').addEventListener('click', function () { setCategory(''); });
 
+  // --- shareable links -------------------------------------------------------
+  // ?r=<facility id> opens the map on that restaurant's popup.
+  function linkFor(f) {
+    var c = f.geometry.coordinates;
+    return location.origin + location.pathname + '?r=' + encodeURIComponent(f.properties.id) +
+      '#16/' + c[1].toFixed(5) + '/' + c[0].toFixed(5);
+  }
+  function shareRestaurant(f, button) {
+    var url = linkFor(f);
+    var done = function (msg) {
+      button.textContent = msg;
+      setTimeout(function () { button.textContent = 'Share'; }, 2000);
+    };
+    if (navigator.share && isPhone()) {
+      navigator.share({ title: f.properties.name, text: f.properties.name + ' – inspection score', url: url })
+        .catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () { done('Link copied'); },
+                                              function () { window.prompt('Copy this link:', url); });
+    } else {
+      window.prompt('Copy this link:', url);
+    }
+  }
+  function openFromLink() {
+    var id = new URLSearchParams(location.search).get('r');
+    if (!id) return;
+    var f = all.filter(function (x) { return x.properties.id === id; })[0];
+    if (!f) return;
+    revealIfHidden(f);
+    flyToVisible(f.geometry.coordinates, true);
+    showPopup(f);
+  }
+  // A restaurant opened from search or a link is shown even if a filter hid it.
+  function revealIfHidden(f) {
+    if (isStale(f.properties) && !showStale) {
+      showStale = true;
+      document.getElementById('show-stale').checked = true;
+      refresh();
+    }
+  }
+
   function setupSearch() {
     var input = document.getElementById('search');
     var list = document.getElementById('results');
 
     function pick(f) {
       list.hidden = true;
+      revealIfHidden(f);
       if (isPhone()) setPanel(false);
       input.value = f.properties.name;
       flyToVisible(f.geometry.coordinates);
@@ -629,10 +700,12 @@
     all = res[0].features;
     buildGradeButtons();
     buildMonthSelect();
+    setupStaleToggle();
     setupSearch();
     if (res[2]) addCountyLayers(res[2]);   // below the pins, so it is added first
     addLayers();
     fitToData();
+    openFromLink();
     return fetch('data/meta.json').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
   }).then(function (meta) {
     var text = all.length.toLocaleString() + ' food service establishments';
