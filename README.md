@@ -71,7 +71,7 @@ PROJECT_ID=my-project bash deploy/setup.sh                                   # b
 gcloud run jobs execute inspection-collector --region us-east1               # run now
 gcloud run jobs execute inspection-collector --region us-east1 \
   --update-env-vars COLLECT_ARGS=--full                                      # full backfill (this run only)
-PROJECT_ID=my-project ALERT_EMAIL=you@example.com bash deploy/alerts-setup.sh   # email when a run fails
+python3 deploy/alerts_setup.py --project my-project --email you@example.com    # email when a run fails
 ```
 
 `setup.sh` is safe to run again and seeds the cloud database from
