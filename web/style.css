@@ -270,7 +270,7 @@ html, body {
 .tag-repeat { color: var(--grade-u); border-color: var(--grade-u); }
 
 @media (max-width: 560px) {
-  #drawer { top: auto; left: 0; width: auto; height: 62%; border-left: 0; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
+  #drawer { top: auto; left: 0; width: auto; height: auto; max-height: 62%; border-left: 0; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
 }
 
 /* counties without data */
@@ -312,3 +312,23 @@ html, body {
 /* likely-closed toggle */
 .stale { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .stale input { margin: 0; }
+
+/* near-me list */
+.nearby-btn {
+  width: 100%; margin-top: 10px; padding: 7px 10px;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--text);
+  background: var(--hover); border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+}
+.nearby-btn:hover { background: var(--border); }
+.near-tools { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.near-tools select { padding: 5px 6px; font: inherit; font-size: 13px; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.near-tools .more { margin-top: 0; padding: 5px 10px; font: inherit; font-size: 13px; color: var(--text); background: var(--hover); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.near-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.near-list li { display: flex; gap: 10px; align-items: center; padding: 9px 4px; border-top: 1px solid var(--border); cursor: pointer; }
+.near-list li:hover, .near-list li:focus { background: var(--hover); outline: none; }
+.near-list .badge { flex: none; min-width: 34px; padding: 3px 0; text-align: center; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; }
+.near-name { font-size: 14px; font-weight: 600; }
+.near-sub { font-size: 12px; color: var(--muted); }
+.near-ask { margin: 10px 0 0; font-size: 14px; line-height: 1.45; }
+.near-tools { flex-wrap: wrap; }
+.near-tools .more.primary { font-weight: 600; background: var(--text); color: var(--bg); border-color: var(--text); }

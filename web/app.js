@@ -182,6 +182,8 @@
   function refresh() {
     var src = map.getSource('facilities');
     if (src) src.setData({ type: 'FeatureCollection', features: visible() });
+    var drawer = document.getElementById('drawer');
+    if (!drawer.hidden && drawer.dataset.id === 'nearby' && nearby.center) showNearby();  // follow the filters
   }
 
   function formatDate(iso) {
@@ -198,7 +200,7 @@
     return n;
   }
 
-  function showPopup(feature) {
+  function showPopup(feature, opts) {
     if (isPhone()) setPanel(false);  // keep the popup from opening under the panel
     var p = feature.properties;
     var box = el('div', 'popup');
@@ -230,6 +232,13 @@
     more.type = 'button';
     more.addEventListener('click', function () { openHistory(feature); });
     var actions = el('div', 'actions');
+    if (opts && opts.backToList && document.getElementById('drawer').hidden) {
+      var back = el('button', 'more', '◀ List');
+      back.type = 'button';
+      back.title = 'Back to the list of places near you';
+      back.addEventListener('click', function () { if (popup) popup.remove(); showNearby(); });
+      actions.appendChild(back);
+    }
     actions.appendChild(more);
     // A plain Google Maps search (no API): reviews, photos and hours are one click away.
     var g = el('a', 'more gmaps', 'Google Maps ↗');
@@ -357,10 +366,16 @@
   }
 
   // Centre a point in the part of the map the side panel doesn't cover.
-  function flyToVisible(lngLat, instant) {
+  function flyToVisible(lngLat, instant, zoom) {
     var panel = document.querySelector('.panel');
-    var wide = panel && panel.offsetWidth && window.innerWidth - panel.offsetWidth > 360;
-    var opts = { center: lngLat, zoom: 16, offset: [wide ? (panel.offsetWidth + 12) / 2 : 0, 40] };
+    var drawer = document.getElementById('drawer');
+    var left = panel && panel.offsetWidth && window.innerWidth - panel.offsetWidth > 360 ? panel.offsetWidth + 12 : 0;
+    var right = 0, bottom = 0;
+    if (!drawer.hidden) {
+      if (isPhone()) bottom = drawer.offsetHeight; else right = drawer.offsetWidth;
+    }
+    var opts = { center: lngLat, zoom: zoom || Math.max(map.getZoom(), 16),
+                 offset: [(left - right) / 2, bottom ? -bottom / 2 + 40 : 40] };
     if (instant) map.easeTo(Object.assign(opts, { duration: 0 })); else map.flyTo(opts);
   }
 
@@ -455,6 +470,129 @@
       refresh();
     }
   }
+
+  // --- near me -----------------------------------------------------------------
+  // A list of the shown (filtered) places nearest to you, or to the map centre
+  // when location isn't available, in the side drawer.
+  var nearby = { center: null, label: '', sort: 'distance' };
+  function miles(m) {
+    var mi = m / 1609.34;
+    return mi < 0.1 ? Math.round(m * 3.281 / 10) * 10 + ' ft' : (mi < 10 ? mi.toFixed(1) : Math.round(mi)) + ' mi';
+  }
+  function findNearMe() {
+    if (isPhone()) setPanel(false);
+    if (!navigator.geolocation) return askForLocation('unsupported');
+    showNearby(null, '');  // shows "Finding your location…" while the browser asks
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      var here = [pos.coords.longitude, pos.coords.latitude];
+      map.easeTo({ center: here, zoom: Math.max(map.getZoom(), 13) });
+      showNearby(here, 'you');
+    }, function (err) {
+      askForLocation(err && err.code === 1 ? 'denied' : 'unavailable');
+    }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 });
+  }
+  // Shown instead of a list when we don't have your location: explain, and let
+  // you try again or deliberately pick the map area.
+  function askForLocation(reason) {
+    var drawer = document.getElementById('drawer');
+    var body = document.getElementById('drawer-body');
+    body.textContent = '';
+    drawer.dataset.id = 'nearby-ask';
+    drawer.hidden = false;
+    body.appendChild(el('h2', null, 'Places near you'));
+    body.appendChild(el('p', 'near-ask', {
+      denied: 'Location is blocked for this site. To see places near you, allow location for this site in your browser or phone settings, then try again.',
+      unavailable: 'Your location couldn\'t be found right now. Check that location services are on, then try again.',
+      unsupported: 'This browser can\'t share your location.'
+    }[reason]));
+    var tools = el('div', 'near-tools');
+    if (reason !== 'unsupported') {
+      var again = el('button', 'more primary', '📍 Share my location');
+      again.type = 'button';
+      again.addEventListener('click', findNearMe);
+      tools.appendChild(again);
+    }
+    var area = el('button', 'more', 'Use the map area instead');
+    area.type = 'button';
+    area.addEventListener('click', function () {
+      var c = map.getCenter();
+      showNearby([c.lng, c.lat], 'the map centre');
+    });
+    tools.appendChild(area);
+    body.appendChild(tools);
+  }
+  function showNearby(center, label) {
+    if (center) { nearby.center = center; nearby.label = label; }
+    var drawer = document.getElementById('drawer');
+    var body = document.getElementById('drawer-body');
+    body.textContent = '';
+    drawer.dataset.id = 'nearby';
+    drawer.hidden = false;
+    body.appendChild(el('h2', null, 'Near ' + (nearby.center ? nearby.label : 'you')));
+    if (!nearby.center) { body.appendChild(el('p', 'meta', 'Finding your location…')); return; }
+
+    var tools = el('div', 'near-tools');
+    var sort = el('select');
+    sort.setAttribute('aria-label', 'Sort');
+    [['distance', 'Closest first'], ['best', 'Best score first'], ['worst', 'Lowest score first']].forEach(function (o) {
+      var opt = el('option', null, o[1]); opt.value = o[0]; sort.appendChild(opt);
+    });
+    sort.value = nearby.sort;
+    sort.addEventListener('change', function () { nearby.sort = sort.value; showNearby(); });
+    tools.appendChild(sort);
+    var here = el('button', 'more', 'Use map area');
+    here.type = 'button';
+    here.title = 'List places around the centre of the map';
+    here.addEventListener('click', function () { var c = map.getCenter(); showNearby([c.lng, c.lat], 'the map centre'); });
+    tools.appendChild(here);
+    body.appendChild(tools);
+
+    var c = nearby.center;
+    var rows = visible().map(function (f) {
+      var g = f.geometry.coordinates;
+      return { f: f, d: metres(c[1], c[0], g[1], g[0]) };
+    }).filter(function (r) { return r.d <= 16093; });   // 10 miles
+    var score = function (r) { var s = r.f.properties.score; return s === null || s === undefined || s === '' ? null : Number(s); };
+    rows.sort(function (a, b) {
+      if (nearby.sort === 'distance') return a.d - b.d;
+      var sa = score(a), sb = score(b);
+      if (sa === null || sb === null) return (sa === null) - (sb === null) || a.d - b.d;
+      return nearby.sort === 'best' ? (sb - sa) || (a.d - b.d) : (sa - sb) || (a.d - b.d);
+    });
+    if (nearby.sort !== 'distance') {
+      // "best/worst nearby" means within a short drive, not the whole 10 miles
+      rows = rows.filter(function (r) { return r.d <= 4828; });   // 3 miles
+    }
+    var shown = rows.slice(0, 50);
+    body.appendChild(el('p', 'meta', shown.length ? 'Showing ' + shown.length + ' of ' + rows.length +
+      ' places within ' + (nearby.sort === 'distance' ? '10' : '3') + ' miles, with your filters applied.' :
+      'No places within 10 miles match your filters.'));
+    var ul = el('ul', 'near-list');
+    shown.forEach(function (r) {
+      var p = r.f.properties;
+      var li = el('li');
+      li.tabIndex = 0;
+      li.appendChild(scoreBadge(p.score));
+      var text = el('div', 'near-text');
+      text.appendChild(el('div', 'near-name', p.name));
+      text.appendChild(el('div', 'near-sub', miles(r.d) + (p.cat ? ' · ' + p.cat : '') + ' · ' + formatDate(p.date)));
+      li.appendChild(text);
+      var go = function () {
+        // Step aside when there isn't room for the popup beside the list (always on phones).
+        var drawer = document.getElementById('drawer');
+        var panel = document.querySelector('.panel');
+        var gap = window.innerWidth - drawer.offsetWidth - (panel.offsetWidth || 0) - 24;
+        if (isPhone() || gap < 360) drawer.hidden = true;
+        flyToVisible(r.f.geometry.coordinates);
+        showPopup(r.f, { backToList: true });
+      };
+      li.addEventListener('click', go);
+      li.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+  }
+  document.getElementById('nearby-btn').addEventListener('click', findNearMe);
 
   function setupSearch() {
     var input = document.getElementById('search');
