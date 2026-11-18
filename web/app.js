@@ -128,6 +128,7 @@
   }
 
   function openHistory(feature) {
+    if (isPhone()) setPanel(false);  // the history drawer needs the screen
     var p = feature.properties;
     var drawer = document.getElementById('drawer');
     var body = document.getElementById('drawer-body');
@@ -178,6 +179,7 @@
   }
 
   function showPopup(feature) {
+    if (isPhone()) setPanel(false);  // keep the popup from opening under the panel
     var p = feature.properties;
     var box = el('div', 'popup');
     box.appendChild(el('h2', null, p.name));
