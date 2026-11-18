@@ -17,6 +17,7 @@ import collect_history  # noqa: E402
 import counties  # noqa: E402
 import db  # noqa: E402
 import export  # noqa: E402
+import geocode  # noqa: E402
 import import_gnr  # noqa: E402
 import osm  # noqa: E402
 
@@ -302,6 +303,15 @@ class OsmCategories(unittest.TestCase):
                                      ("b", "JD'S TACO", 34.0, -84.0),
                                      ("c", "PIZZA HUT", 34.02, -84.0)])
         self.assertEqual(cats, {"a": "Pizza"})
+
+
+class GeocodeCleanup(unittest.TestCase):
+    def test_clean_street(self):
+        self.assertEqual(geocode.clean_street("4993 RUSSELL PKWY STE 300"), "4993 RUSSELL PKWY")
+        self.assertEqual(geocode.clean_street("1984 HOSEA WILLIAMS DR STE A,B"), "1984 HOSEA WILLIAMS DR")
+        self.assertEqual(geocode.clean_street("5524 US HWY 17"), "5524 US HIGHWAY 17")
+        self.assertEqual(geocode.clean_street("10265 GA-142"), "10265 STATE HIGHWAY 142")
+        self.assertEqual(geocode.clean_street("880 Indian Trail Lilburn Rd NW #A"), "880 INDIAN TRAIL LILBURN RD NW")
 
 
 if __name__ == "__main__":
