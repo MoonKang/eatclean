@@ -23,8 +23,13 @@
       <button id="panel-close" class="panel-close" type="button" aria-label="Close search and filters">×</button>
     </div>
     <div class="search">
-      <input id="search" type="search" placeholder="Restaurant name or Google Maps link" autocomplete="off" aria-label="Search by restaurant name or Google Maps link">
+      <input id="search" type="search" placeholder="Name, category or Google Maps link" autocomplete="off" aria-label="Search by restaurant name, category or Google Maps link">
       <ul id="results" hidden></ul>
+    </div>
+    <div id="cat-filter" class="cat-filter" hidden
+         title="Categories come from OpenStreetMap and are known for about 1 in 5 restaurants">
+      <span>🍽 <span class="cat-name"></span> · <span class="cat-count"></span> places</span>
+      <button type="button" aria-label="Clear category">×</button>
     </div>
     <div class="grades" id="grades" role="group" aria-label="Filter by grade"></div>
     <label class="month">

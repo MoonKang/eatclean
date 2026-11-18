@@ -284,3 +284,19 @@ html, body {
   background: repeating-linear-gradient(135deg, rgba(95, 103, 112, 0.55) 0 1.2px, rgba(120, 128, 138, 0.18) 1.2px 6px);
 }
 .popup .county-note { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }
+
+/* category filter chip */
+.cat-filter {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 4px 4px 4px 10px;
+  font-size: 13px;
+  background: var(--hover); border: 1px solid var(--border); border-radius: 999px;
+}
+.cat-filter[hidden] { display: none; }
+.cat-filter button {
+  width: 24px; height: 24px; padding: 0;
+  font-size: 16px; line-height: 1; color: var(--muted);
+  background: none; border: 0; border-radius: 50%; cursor: pointer;
+}
+.cat-filter button:hover { background: var(--border); }
+#results li.cat-hit { font-weight: 600; }

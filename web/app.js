@@ -13,6 +13,7 @@
 
   var all = [];
   var month = '';          // 'yyyy-mm' or '' for any
+  var category = '';       // e.g. 'Korean', or '' for any (from OpenStreetMap, see collector/osm.py)
   var historyCache = {};   // bucket number -> promise of {facilityId: [inspections]}
   var active = { A: true, B: true, C: true, U: true, '': true };
   var popup = null;
@@ -34,6 +35,7 @@
     return all.filter(function (f) {
       var p = f.properties;
       if (!active[p.grade]) return false;
+      if (category && (p.cat || '').split(', ').indexOf(category) === -1) return false;
       return !month || (p.date || '').slice(0, 7) === month;
     });
   }
@@ -345,9 +347,44 @@
   // A dot on the menu button says some filter is on while the panel is closed.
   function updateMenuDot() {
     var filtering = document.getElementById('grades').classList.contains('filtering') ||
-                    !!document.getElementById('month').value;
+                    !!document.getElementById('month').value || !!category;
     document.querySelector('.menu-dot').hidden = !filtering;
   }
+
+  // --- category filter --------------------------------------------------------
+  var catCounts = null;  // {label: count}, built on first search
+  function categoryCounts() {
+    if (!catCounts) {
+      catCounts = {};
+      all.forEach(function (f) {
+        (f.properties.cat || '').split(', ').forEach(function (c) {
+          if (c) catCounts[c] = (catCounts[c] || 0) + 1;
+        });
+      });
+    }
+    return catCounts;
+  }
+  // Categories whose name has a word starting with the query: "kor" -> Korean.
+  function matchCategories(q) {
+    var counts = categoryCounts();
+    return Object.keys(counts).filter(function (c) {
+      return c.toLowerCase().split(/[\s-]+/).some(function (w) { return w.indexOf(q) === 0; }) ||
+             c.toLowerCase().indexOf(q) === 0;
+    }).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 4);
+  }
+  function setCategory(c) {
+    category = c;
+    var chip = document.getElementById('cat-filter');
+    chip.hidden = !c;
+    if (c) {
+      chip.querySelector('.cat-name').textContent = c;
+      chip.querySelector('.cat-count').textContent = categoryCounts()[c].toLocaleString();
+    }
+    if (popup) popup.remove();
+    updateMenuDot();
+    refresh();
+  }
+  document.querySelector('#cat-filter button').addEventListener('click', function () { setCategory(''); });
 
   function setupSearch() {
     var input = document.getElementById('search');
@@ -377,10 +414,20 @@
         if (link.lat != null) flyToVisible([link.lon, link.lat]);
         if (!hits.length) list.appendChild(el('li', 'empty', 'No inspected restaurant found at that Google Maps place'));
       } else {
+        var cats = matchCategories(q);
+        cats.forEach(function (c) {
+          var li = el('li', 'cat-hit', '🍽 ' + c);
+          li.tabIndex = 0;
+          li.appendChild(el('span', 'sub', 'Show all ' + categoryCounts()[c].toLocaleString() + ' with this category'));
+          function choose() { list.hidden = true; input.value = ''; setCategory(c); if (isPhone()) setPanel(false); }
+          li.addEventListener('click', choose);
+          li.addEventListener('keydown', function (e) { if (e.key === 'Enter') choose(); });
+          list.appendChild(li);
+        });
         for (var i = 0; i < all.length && hits.length < 12; i++) {
           if (all[i].properties.name.toLowerCase().indexOf(q) !== -1) hits.push(all[i]);
         }
-        if (!hits.length) list.appendChild(el('li', 'empty', 'No restaurants match'));
+        if (!hits.length && !cats.length) list.appendChild(el('li', 'empty', 'No restaurants or categories match'));
       }
       if (link && hits.length === 1) { pick(hits[0]); return; }
       hits.forEach(function (f) {
