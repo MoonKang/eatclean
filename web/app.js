@@ -12,7 +12,7 @@
   GRADES.forEach(function (g) { COLOR[g.key] = g.color; });
 
   var all = [];
-  var month = '';          // 'yyyy-mm' or '' for any
+  var month = '';          // 'yyyy-mm': inspected in that month or later; '' for any time
   var showStale = false;   // places not inspected in STALE_MONTHS are probably closed
   var STALE_MONTHS = 18;
   var staleBefore = (function () {
@@ -44,7 +44,7 @@
       if (!active[p.grade]) return false;
       if (category && (p.cat || '').split(', ').indexOf(category) === -1) return false;
       if (!showStale && !month && isStale(p)) return false;
-      return !month || (p.date || '').slice(0, 7) === month;
+      return !month || (p.date || '') >= month;   // '2026-11-03' >= '2026-11'
     });
   }
 
@@ -78,7 +78,7 @@
       var p = m.split('-');
       var label = new Date(Number(p[0]), Number(p[1]) - 1, 1)
         .toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
-      var opt = el('option', null, label + ' (' + counts[m].toLocaleString() + ')');
+      var opt = el('option', null, label);
       opt.value = m;
       select.appendChild(opt);
     });
@@ -289,7 +289,6 @@
       dot.style.background = g.color;
       b.appendChild(dot);
       b.appendChild(el('span', null, g.label));
-      b.appendChild(el('span', 'count', counts[g.key].toLocaleString()));
       b.addEventListener('click', function () {
         selected[g.key] = !selected[g.key];
         apply();
