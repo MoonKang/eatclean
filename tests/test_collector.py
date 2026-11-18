@@ -17,6 +17,8 @@ import collect_history  # noqa: E402
 import counties  # noqa: E402
 import db  # noqa: E402
 import export  # noqa: E402
+import import_gnr  # noqa: E402
+import osm  # noqa: E402
 
 FACILITY = {
     "mapAddress": "123 MAIN ST STE 4 \r\nSPRINGFIELD, GA 30000",
@@ -205,6 +207,93 @@ class Counties(unittest.TestCase):
         self.assertFalse(props["Chatham"]["covered"])  # nothing listed at all
         self.assertEqual(props["Gwinnett"]["source"], "GNR Public Health")
         self.assertNotIn("source", props["Fulton"])
+
+
+GNR_PASTE = """MOST RECENT INSPECTION
+TEST DINER
+12 Example Way SE Peachtree Corners, GA 30092
+MOST RECENT INSPECTION
+Food 2025 | Routine
+November 17, 2026 | 98 A
+View Inspection
+TEST POOL
+1 Pool Rd Duluth, GA 30096
+Public Swimming Pool Inspection Report 2023 | Routine
+November 12, 2026 | 0
+View Inspection
+Test Cafe
+5 Main St **ACTIVE** CONYERS, GA 30013 ,
+Food 2025 | Follow-up
+November 9, 2026 | 64 U
+View Inspection
+"""
+
+
+class GnrImport(unittest.TestCase):
+    def test_parse(self):
+        recs, skipped = import_gnr.parse_paste(GNR_PASTE)
+        self.assertEqual(skipped, 0)
+        self.assertEqual([r["name"] for r in recs], ["TEST DINER", "Test Cafe"])  # pool skipped
+        self.assertEqual((recs[0]["street"], recs[0]["city"], recs[0]["zip"]),
+                         ("12 Example Way SE", "Peachtree Corners", "30092"))
+        self.assertEqual((recs[0]["date"], recs[0]["score"]), ("2026-11-17", 98))
+        self.assertEqual((recs[1]["street"], recs[1]["city"], recs[1]["purpose"]), ("5 Main St", "Conyers", "Follow-up"))
+
+    def test_table_and_staging_load(self):
+        recs, _ = import_gnr.parse_paste(GNR_PASTE)
+        older = dict(recs[0], date="2026-05-01", score=85)
+        g = sqlite3.connect(":memory:")
+        g.row_factory = sqlite3.Row
+        g.executescript(import_gnr.GNR_SCHEMA)
+        self.assertEqual(import_gnr.add_records(g, recs + [older], "t0"), 3)
+        self.assertEqual(import_gnr.add_records(g, recs, "t0"), 0)  # pasting twice adds nothing
+
+        conn = memory_db()
+        self.assertEqual(import_gnr.load_into(conn, g, "t1"), (2, 3))
+        fid = import_gnr.facility_id(recs[0])
+        row = conn.execute("SELECT last_score, last_inspection_date, history_date FROM facilities WHERE id = ?",
+                           (fid,)).fetchone()
+        self.assertEqual(tuple(row), (98, "2026-11-17", "2026-11-17"))  # newest wins; no portal refetch
+        self.assertTrue(all(r[0] < 0 for r in conn.execute("SELECT inspection_id FROM inspections")))
+        self.assertTrue(0 <= export.bucket(fid) < export.BUCKETS)
+
+        # Geocodes survive into the next staging build, and loading twice does not duplicate.
+        conn.execute("UPDATE facilities SET lat = 34.0, lon = -84.0, geocode_status = 'Match',"
+                     " geocode_input = ? WHERE id = ?", (db.address_key(conn.execute(
+                         "SELECT * FROM facilities WHERE id = ?", (fid,)).fetchone()), fid))
+        self.assertEqual(import_gnr.save_geocodes(conn, g), 1)
+        fresh = memory_db()
+        import_gnr.load_into(fresh, g, "t2")
+        import_gnr.load_into(fresh, g, "t3")
+        self.assertEqual(fresh.execute("SELECT lat FROM facilities WHERE id = ?", (fid,)).fetchone()[0], 34.0)
+        self.assertEqual(fresh.execute("SELECT COUNT(*) FROM facilities").fetchone()[0], 2)
+
+
+class OsmCategories(unittest.TestCase):
+    def test_names(self):
+        self.assertEqual(osm.name_score("PIZZA HUT #4765", "Pizza Hut"), 1)
+        self.assertEqual(osm.name_score("Teriyaki Madness", "Teryaki Madness"), 1)
+        self.assertEqual(osm.name_score("Rusty Rudder's Taphouse", "Rusty Rudders Tap House"), 1)
+        self.assertEqual(osm.name_score("TEQUILA'S BAR & GRILL", "McDonald's"), 0)  # not via a stray "s"
+        self.assertEqual(osm.name_score("JD'S TACO AND HIBACHI", "Taco Bell"), 0)
+
+    def test_labels(self):
+        self.assertEqual(osm.label("restaurant", "korean;barbecue"), "Korean, Barbecue")
+        self.assertEqual(osm.label("fast_food", None), "Fast food")
+        self.assertIsNone(osm.label("restaurant", None))
+
+    def test_match_by_name_and_distance(self):
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(osm.SCHEMA)
+        conn.executemany("INSERT INTO osm_places VALUES (?, ?, ?, ?, ?, ?)", [
+            ("node/1", "Pizza Hut", 34.0001, -84.0, "restaurant", "pizza"),
+            ("node/2", "Taco Bell", 34.0, -84.0001, "fast_food", "mexican"),
+            ("node/3", "Pizza Hut", 34.01, -84.0, "restaurant", "pizza"),  # ~1.1 km away
+        ])
+        cats = osm.categories(conn, [("a", "PIZZA HUT #12", 34.0, -84.0),
+                                     ("b", "JD'S TACO", 34.0, -84.0),
+                                     ("c", "PIZZA HUT", 34.02, -84.0)])
+        self.assertEqual(cats, {"a": "Pizza"})
 
 
 if __name__ == "__main__":

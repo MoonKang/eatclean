@@ -181,17 +181,36 @@
     var box = el('div', 'popup');
     box.appendChild(el('h2', null, p.name));
     box.appendChild(el('div', 'addr', p.address));
+    if (p.cat) {
+      // Category matched from OpenStreetMap by name and location (see collector/osm.py).
+      var cat = el('div', 'cat', p.cat);
+      cat.title = 'Category from OpenStreetMap';
+      box.appendChild(cat);
+    }
 
     var row = el('div', 'score');
     row.appendChild(scoreBadge(p.score));
     row.appendChild(el('span', null, p.grade ? 'Grade ' + p.grade : 'No score'));
     row.appendChild(el('span', 'when', '· ' + formatDate(p.date)));
     box.appendChild(row);
+    if (p.src === 'gnr') {
+      box.appendChild(el('div', 'src-note', 'From GNR Public Health, copied by hand. May be out of date.'));
+    }
 
     var more = el('button', 'more', 'More history');
     more.type = 'button';
     more.addEventListener('click', function () { openHistory(feature); });
-    box.appendChild(more);
+    var actions = el('div', 'actions');
+    actions.appendChild(more);
+    // A plain Google Maps search (no API): reviews, photos and hours are one click away.
+    var g = el('a', 'more gmaps', 'Google Maps ↗');
+    g.href = 'https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(p.name + ', ' + p.address + ', GA');
+    g.target = '_blank';
+    g.rel = 'noopener';
+    g.title = 'Reviews, photos and hours on Google Maps';
+    actions.appendChild(g);
+    box.appendChild(actions);
 
     if (popup) popup.remove();
     popup = new maplibregl.Popup({ offset: 12, maxWidth: '300px' })
@@ -225,6 +244,80 @@
     });
   }
 
+  // --- Google Maps links -----------------------------------------------------
+  // Reads a pasted Google Maps URL. Place links carry the place's exact
+  // position (!3d<lat>!4d<lon>) and its name (/place/<name>/); other links have
+  // the map centre (@lat,lon) or a ?q= query. Short links redirect elsewhere and
+  // can't be followed from the page, so they are only recognised.
+  function parseMapsLink(text) {
+    if (!/^https?:\/\//i.test(text) || !/google\.[a-z.]+\/maps|maps\.google\.|goo\.gl/i.test(text)) return null;
+    if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(text)) return { shortLink: true };
+    var out = { lat: null, lon: null, name: null };
+    var m = text.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
+            text.match(/[?&](?:q|query|ll|destination)=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/i) ||
+            text.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    if (m) { out.lat = parseFloat(m[1]); out.lon = parseFloat(m[2]); }
+    var n = text.match(/\/place\/([^/@?]+)/) || text.match(/[?&](?:q|query)=([^&]+)/i);
+    if (n) {
+      var parts = decodeURIComponent(n[1].replace(/\+/g, ' ')).split(',');
+      var name = parts[0].trim();
+      if (name && !/^-?\d+\.\d+$/.test(name)) {
+        out.name = name;
+        out.hint = words(parts.slice(1).join(' '));  // town or street, if the link has one
+      }
+    }
+    return out.lat != null || out.name ? out : null;
+  }
+
+  var STOP = { the: 1, restaurant: 1, inc: 1, llc: 1, and: 1, of: 1, at: 1, bar: 1, grill: 1, cafe: 1 };
+  function words(s) {
+    return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')  // Chão -> Chao
+      .toLowerCase().replace(/&/g, ' and ').replace(/['\u2019]/g, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+      .filter(function (w) { return w.length > 1 && !STOP[w]; });
+  }
+  function nameScore(a, b) {
+    var wa = words(a), wb = words(b);
+    if (!wa.length || !wb.length) return 0;
+    var common = wa.filter(function (w) { return wb.indexOf(w) !== -1; }).length;
+    return common / Math.min(wa.length, wb.length);
+  }
+  function metres(lat1, lon1, lat2, lon2) {
+    var x = (lon2 - lon1) * Math.cos((lat1 + lat2) * Math.PI / 360), y = lat2 - lat1;
+    return Math.sqrt(x * x + y * y) * 111320;
+  }
+
+  // Restaurants for a Google Maps link, best first. With a position: places
+  // within 250 m, a matching name ranked first (a match within 150 m alone is
+  // treated as the answer). With only a name: name matches statewide.
+  function matchMapsLink(link) {
+    var scored = [];
+    all.forEach(function (f) {
+      var s = link.name ? nameScore(link.name, f.properties.name) : 0;
+      if (link.lat != null) {
+        var c = f.geometry.coordinates, d = metres(link.lat, link.lon, c[1], c[0]);
+        if (d <= 250) scored.push({ f: f, d: d, s: s });
+      } else if (s >= 0.5) {
+        // Without a position, an address that contains the link's town ranks first.
+        var addr = words(f.properties.address);
+        var near = (link.hint || []).some(function (w) { return addr.indexOf(w) !== -1; });
+        scored.push({ f: f, d: null, s: s + (near ? 1 : 0) });
+      }
+    });
+    scored.sort(function (a, b) { return (b.s - a.s) || ((a.d || 0) - (b.d || 0)); });
+    var best = scored.filter(function (x) { return x.s >= 0.5 && (x.d == null || x.d <= 150); });
+    if (best.length === 1 || (best.length > 1 && best[0].s > best[1].s)) scored = [best[0]];
+    return scored.slice(0, 10).map(function (x) {
+      return { type: 'Feature', geometry: x.f.geometry, properties: x.f.properties, dist: x.d };
+    });
+  }
+
+  // Centre a point in the part of the map the side panel doesn't cover.
+  function flyToVisible(lngLat) {
+    var panel = document.querySelector('.panel');
+    var wide = panel && window.innerWidth - panel.offsetWidth > 360;
+    map.flyTo({ center: lngLat, zoom: 16, offset: [wide ? (panel.offsetWidth + 12) / 2 : 0, 40] });
+  }
+
   function setupSearch() {
     var input = document.getElementById('search');
     var list = document.getElementById('results');
@@ -232,25 +325,36 @@
     function pick(f) {
       list.hidden = true;
       input.value = f.properties.name;
-      map.flyTo({ center: f.geometry.coordinates, zoom: 16 });
+      flyToVisible(f.geometry.coordinates);
       showPopup(f);
     }
 
     input.addEventListener('input', function () {
-      var q = input.value.trim().toLowerCase();
+      var raw = input.value.trim();
+      var q = raw.toLowerCase();
       list.textContent = '';
       if (q.length < 2) { list.hidden = true; return; }
       var hits = [];
-      for (var i = 0; i < all.length && hits.length < 12; i++) {
-        if (all[i].properties.name.toLowerCase().indexOf(q) !== -1) hits.push(all[i]);
+      var link = parseMapsLink(raw);
+      if (link && link.shortLink) {
+        list.appendChild(el('li', 'empty', 'Short links (maps.app.goo.gl) can\'t be read here. Open the link, then copy the full address from the browser\'s address bar.'));
+        list.hidden = false;
+        return;
+      } else if (link) {
+        hits = matchMapsLink(link);
+        if (link.lat != null) flyToVisible([link.lon, link.lat]);
+        if (!hits.length) list.appendChild(el('li', 'empty', 'No inspected restaurant found at that Google Maps place'));
+      } else {
+        for (var i = 0; i < all.length && hits.length < 12; i++) {
+          if (all[i].properties.name.toLowerCase().indexOf(q) !== -1) hits.push(all[i]);
+        }
+        if (!hits.length) list.appendChild(el('li', 'empty', 'No restaurants match'));
       }
-      if (!hits.length) {
-        list.appendChild(el('li', 'empty', 'No restaurants match'));
-      }
+      if (link && hits.length === 1) { pick(hits[0]); return; }
       hits.forEach(function (f) {
         var li = el('li', null, f.properties.name);
         li.tabIndex = 0;
-        li.appendChild(el('span', 'sub', f.properties.address));
+        li.appendChild(el('span', 'sub', f.properties.address + (f.dist != null ? ' · ' + Math.round(f.dist) + ' m away' : '')));
         li.addEventListener('click', function () { pick(f); });
         li.addEventListener('keydown', function (e) { if (e.key === 'Enter') pick(f); });
         list.appendChild(li);
@@ -261,6 +365,8 @@
     document.addEventListener('click', function (e) {
       if (!e.target.closest('.search')) list.hidden = true;
     });
+    // Anything typed or pasted while the data was still loading.
+    if (input.value.trim()) input.dispatchEvent(new Event('input'));
   }
 
   // Diagonal hatch for counties the state portal has no data for.
@@ -326,13 +432,16 @@
     var p = feature.properties;
     var box = el('div', 'popup');
     box.appendChild(el('h2', null, p.name + ' County'));
-    box.appendChild(el('div', 'addr', 'Not included on this map'));
+    box.appendChild(el('div', 'addr', p.imported ? 'Partly included on this map' : 'Not included on this map'));
     var why = p.source
       ? p.name + ' County publishes its inspections through ' + p.source + ', not the state portal this map uses.'
       : p.facilities
         ? 'The state inspection portal this map uses lists ' + p.facilities + ' permits here but has inspection scores for only ' + p.inspected + '.'
         : 'The state inspection portal this map uses has no results for this county.';
     box.appendChild(el('p', 'county-note', why));
+    if (p.imported) {
+      box.appendChild(el('p', 'county-note', 'The ' + p.imported + ' pins here were copied by hand from GNR\'s site and are not a complete list.'));
+    }
     if (p.source_url) {
       var a = el('a', null, 'Look up ' + p.name + ' County inspections');
       a.href = p.source_url;
@@ -449,7 +558,8 @@
   }).then(function (meta) {
     var text = all.length.toLocaleString() + ' food service establishments';
     if (meta && meta.newest_inspection) text += ' · newest inspection ' + formatDate(meta.newest_inspection);
-    metaEl.textContent = text + '. Source: Georgia Department of Public Health.';
+    metaEl.textContent = text + '. Source: Georgia Department of Public Health' +
+      (meta && meta.gnr_mapped ? ', plus ' + meta.gnr_mapped.toLocaleString() + ' hand-copied from GNR Public Health.' : '.');
     var missing = meta && meta.counties_uncovered;
     if (missing && missing.length) {
       var note = el('p', 'meta coverage');

@@ -14,7 +14,9 @@ import zlib
 
 import db
 
+import osm
 from counties import CountyIndex
+from import_gnr import ID_PREFIX as GNR_PREFIX, SOURCE_URL as GNR_URL
 from portal import SITE
 
 OUT_DIR = os.path.join(db.ROOT, "web", "data")
@@ -24,6 +26,8 @@ BUCKETS = 1000  # history is split into this many files so the page fetches only
 
 def bucket(facility_id):
     """Which history file a facility lives in. The map reads this from the 'b' property."""
+    if facility_id.startswith(GNR_PREFIX):
+        return zlib.crc32(facility_id.encode("utf-8")) % BUCKETS
     try:
         return int(base64.b64decode(facility_id).decode("ascii")) % BUCKETS
     except (ValueError, UnicodeDecodeError):
@@ -87,17 +91,24 @@ def main():
     # See CountyIndex.coverage_geojson for why inspected facilities are counted too.
     index = CountyIndex()
     county_of = {}
-    counts, inspected = {}, {}
+    # Hand-entered GNR records are counted separately: they are a sample, so they
+    # must not make a county look fully covered.
+    counts, inspected, imported = {}, {}, {}
     for r in conn.execute("SELECT id, lat, lon, last_inspection_date FROM facilities"
                           " WHERE lat IS NOT NULL AND lon IS NOT NULL"):
         geoid = index.lookup(r["lon"], r["lat"])
         county_of[r["id"]] = geoid
-        if geoid:
+        if geoid and r["id"].startswith(GNR_PREFIX):
+            imported[geoid] = imported.get(geoid, 0) + 1
+        elif geoid:
             counts[geoid] = counts.get(geoid, 0) + 1
             if r["last_inspection_date"]:
                 inspected[geoid] = inspected.get(geoid, 0) + 1
 
     coverage = index.coverage_geojson(counts, inspected)
+    for c in coverage["features"]:
+        if imported.get(c["properties"]["geoid"]):
+            c["properties"]["imported"] = imported[c["properties"]["geoid"]]
     uncovered_ids = {c["properties"]["geoid"] for c in coverage["features"] if not c["properties"]["covered"]}
 
     features = []
@@ -129,6 +140,16 @@ def main():
                 "county": index.names[geoid],
             },
         })
+        if r["id"].startswith(GNR_PREFIX):
+            features[-1]["properties"]["src"] = "gnr"
+
+    # Restaurant categories from OpenStreetMap, matched by name and distance.
+    cats = osm.categories(conn, [(f["properties"]["id"], f["properties"]["name"],
+                                  f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0])
+                                 for f in features])
+    for f in features:
+        if f["properties"]["id"] in cats:
+            f["properties"]["cat"] = cats[f["properties"]["id"]]
 
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(os.path.join(OUT_DIR, "facilities.geojson"), "w") as f:
@@ -148,12 +169,16 @@ def main():
         "oldest_inspection": min(dates) if dates else None,
         "counties_covered": len(coverage["features"]) - len(uncovered),
         "counties_uncovered": uncovered,
+        "with_category": len(cats),
+        "gnr_mapped": sum(1 for f in features if f["properties"].get("src") == "gnr"),
+        "gnr_url": GNR_URL,
     }
     with open(os.path.join(OUT_DIR, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
     n_insp, n_files = export_history(conn, {f["properties"]["id"] for f in features})
     print("wrote %d past inspections to %d files in web/data/history/" % (n_insp, n_files))
     print("wrote %d of %d facilities to web/data/facilities.geojson" % (len(features), len(rows)))
+    print("categories from OpenStreetMap: %d of %d mapped facilities" % (len(cats), len(features)))
     print("counties with data: %d of %d; without: %s"
           % (meta["counties_covered"], len(coverage["features"]),
              ", ".join(uncovered) if len(uncovered) <= 12 else "%d counties" % len(uncovered)))

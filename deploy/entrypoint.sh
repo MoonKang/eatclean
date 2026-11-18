@@ -8,7 +8,30 @@
 #   COLLECT_ARGS       extra flags for collect.py, e.g. "--full"    (optional)
 #   HISTORY_ARGS       extra flags for collect_history.py           (optional)
 #   ALLOW_EMPTY_START  set to 1 to start with no database (first run only)
+#
+# Staging (MODE=staging) instead copies the production database read-only, adds
+# the hand-entered GNR table, and publishes to a private staging bucket:
+#   PROD_DATA_BUCKET     production bucket with inspections.db (only read)
+#   STAGING_BUCKET       private bucket holding gnr.db
+#   STAGING_SITE_BUCKET  private bucket the staging site is served from
 set -euo pipefail
+
+if [[ "${MODE:-production}" == "staging" ]]; then
+  : "${PROD_DATA_BUCKET:?PROD_DATA_BUCKET is not set}"
+  : "${STAGING_BUCKET:?STAGING_BUCKET is not set}"
+  : "${STAGING_SITE_BUCKET:?STAGING_SITE_BUCKET is not set}"
+  mkdir -p /app/data
+  gcloud storage cp "gs://${PROD_DATA_BUCKET}/inspections.db" /app/data/inspections.db
+  gcloud storage cp "gs://${STAGING_BUCKET}/gnr.db" /app/data/gnr.db
+  python3 collector/build_staging.py
+  # Nothing is uploaded back: production's database and gnr.db stay as they were.
+  gcloud storage rsync web "gs://${STAGING_SITE_BUCKET}" \
+    --recursive \
+    --delete-unmatched-destination-objects \
+    --cache-control="no-store"
+  echo "Staging site published to the private bucket ${STAGING_SITE_BUCKET}."
+  exit 0
+fi
 
 : "${DATA_BUCKET:?DATA_BUCKET is not set}"
 : "${SITE_BUCKET:?SITE_BUCKET is not set}"
@@ -43,6 +66,8 @@ python3 collector/collect.py ${COLLECT_ARGS:-}
 # shellcheck disable=SC2086
 python3 collector/collect_history.py ${HISTORY_ARGS:-}
 python3 collector/geocode.py
+# Restaurant categories; refreshed at most weekly and never fails the run.
+python3 collector/osm.py
 python3 collector/export.py
 
 # Publish only after every step succeeded.

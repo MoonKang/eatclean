@@ -97,6 +97,7 @@ html, body {
 .maplibregl-popup-content { padding: 12px 14px; border-radius: 9px; font: inherit; color: #1c2024; }
 .popup h2 { margin: 0 18px 2px 0; font-size: 15px; }
 .popup .addr { color: #60676f; font-size: 13px; }
+.popup .src-note { margin-top: 6px; color: #60676f; font-size: 12px; font-style: italic; }
 .popup .score { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .popup .badge {
   min-width: 28px;
@@ -149,6 +150,10 @@ html, body {
   cursor: pointer;
 }
 .popup .more:hover { background: #e6e9ec; }
+.popup .actions { display: flex; gap: 8px; align-items: center; }
+.popup a.more { display: inline-block; text-decoration: none; line-height: normal; }
+.popup .cat { margin-top: 4px; font-size: 12px; color: #1c2024; }
+.popup .cat::before { content: "🍽 "; }
 
 /* history drawer */
 #drawer {

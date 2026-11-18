@@ -65,6 +65,16 @@ jobs:
         # Other settings (buckets, memory, timeout, service account) keep the values setup.sh set.
         run: gcloud run jobs update "$JOB" --image "$IMAGE" --region "$REGION" --quiet
 
+      - name: Point the staging job at the new image
+        # Staging (deploy/staging-setup.sh) is optional; skipped if it does not exist.
+        # Its next run republishes the private staging site with the new web code.
+        run: |
+          if gcloud run jobs describe "${JOB}-staging" --region "$REGION" >/dev/null 2>&1; then
+            gcloud run jobs update "${JOB}-staging" --image "$IMAGE" --region "$REGION" --quiet
+          else
+            echo "No staging job; skipping."
+          fi
+
       - name: Publish the web app
         # Copies code files only. Map data under data/ is written by the collector job and left alone.
         run: |
