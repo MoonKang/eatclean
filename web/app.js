@@ -21,7 +21,8 @@
     container: 'map',
     style: 'https://tiles.openfreemap.org/styles/positron',
     center: [-83.6, 32.9],
-    zoom: 6.3
+    zoom: 6.3,
+    hash: true   // keeps #zoom/lat/lng in the URL so a view can be bookmarked or shared
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
   map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), 'bottom-right');
@@ -262,6 +263,87 @@
     });
   }
 
+  // Diagonal hatch for counties the state portal has no data for.
+  function addHatchImage() {
+    var size = 12;
+    var canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(120, 128, 138, 0.18)';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(95, 103, 112, 0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(0, size); ctx.lineTo(size, 0);
+    ctx.moveTo(-size / 2, size / 2); ctx.lineTo(size / 2, -size / 2);
+    ctx.moveTo(size / 2, size * 1.5); ctx.lineTo(size * 1.5, size / 2);
+    ctx.stroke();
+    map.addImage('no-data-hatch', ctx.getImageData(0, 0, size, size));
+  }
+
+  function addCountyLayers(counties) {
+    addHatchImage();
+    map.addSource('counties', { type: 'geojson', data: counties });
+    var uncovered = ['==', ['get', 'covered'], false];
+    map.addLayer({
+      id: 'uncovered-fill',
+      type: 'fill',
+      source: 'counties',
+      filter: uncovered,
+      paint: { 'fill-pattern': 'no-data-hatch' }
+    });
+    map.addLayer({
+      id: 'uncovered-outline',
+      type: 'line',
+      source: 'counties',
+      filter: uncovered,
+      paint: { 'line-color': '#5f6770', 'line-width': 1, 'line-opacity': 0.6 }
+    });
+    map.addLayer({
+      id: 'uncovered-label',
+      type: 'symbol',
+      source: 'counties',
+      filter: uncovered,
+      minzoom: 7.5,
+      layout: {
+        'text-field': ['concat', ['get', 'name'], ' County\nno data'],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': 11
+      },
+      paint: { 'text-color': '#4a5058', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 }
+    });
+
+    map.on('click', 'uncovered-fill', function (e) {
+      // A restaurant pin on top of the county wins.
+      if (map.queryRenderedFeatures(e.point, { layers: ['points', 'clusters'] }).length) return;
+      showCountyPopup(e.features[0], e.lngLat);
+    });
+    map.on('mouseenter', 'uncovered-fill', function () { map.getCanvas().style.cursor = 'help'; });
+    map.on('mouseleave', 'uncovered-fill', function () { map.getCanvas().style.cursor = ''; });
+  }
+
+  function showCountyPopup(feature, lngLat) {
+    var p = feature.properties;
+    var box = el('div', 'popup');
+    box.appendChild(el('h2', null, p.name + ' County'));
+    box.appendChild(el('div', 'addr', 'Not included on this map'));
+    var why = p.source
+      ? p.name + ' County publishes its inspections through ' + p.source + ', not the state portal this map uses.'
+      : p.facilities
+        ? 'The state inspection portal this map uses lists ' + p.facilities + ' permits here but has inspection scores for only ' + p.inspected + '.'
+        : 'The state inspection portal this map uses has no results for this county.';
+    box.appendChild(el('p', 'county-note', why));
+    if (p.source_url) {
+      var a = el('a', null, 'Look up ' + p.name + ' County inspections');
+      a.href = p.source_url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      box.appendChild(a);
+    }
+    if (popup) popup.remove();
+    popup = new maplibregl.Popup({ maxWidth: '280px' }).setLngLat(lngLat).setDOMContent(box).addTo(map);
+  }
+
   function addLayers() {
     map.addSource('facilities', {
       type: 'geojson',
@@ -337,7 +419,7 @@
   }
 
   function fitToData() {
-    if (!all.length) return;
+    if (!all.length || location.hash.length > 1) return;   // a shared link already set the view
     var b = new maplibregl.LngLatBounds();
     all.forEach(function (f) { b.extend(f.geometry.coordinates); });
     map.fitBounds(b, { padding: { top: 60, bottom: 40, left: 40, right: 40 }, maxZoom: 13, duration: 0 });
@@ -350,11 +432,17 @@
     return r.json();
   });
 
-  Promise.all([dataReady, mapReady]).then(function (res) {
+  // Optional: older data exports have no county file, and the map works without it.
+  var countiesReady = fetch('data/counties.geojson')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .catch(function () { return null; });
+
+  Promise.all([dataReady, mapReady, countiesReady]).then(function (res) {
     all = res[0].features;
     buildGradeButtons();
     buildMonthSelect();
     setupSearch();
+    if (res[2]) addCountyLayers(res[2]);   // below the pins, so it is added first
     addLayers();
     fitToData();
     return fetch('data/meta.json').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
@@ -362,6 +450,15 @@
     var text = all.length.toLocaleString() + ' food service establishments';
     if (meta && meta.newest_inspection) text += ' · newest inspection ' + formatDate(meta.newest_inspection);
     metaEl.textContent = text + '. Source: Georgia Department of Public Health.';
+    var missing = meta && meta.counties_uncovered;
+    if (missing && missing.length) {
+      var note = el('p', 'meta coverage');
+      note.appendChild(el('span', 'swatch'));
+      note.appendChild(document.createTextNode(missing.length <= 4
+        ? 'No data for ' + missing.join(', ') + (missing.length === 1 ? ' County.' : ' counties.')
+        : 'No data for ' + missing.length + ' of 159 counties (shaded).'));
+      metaEl.parentNode.insertBefore(note, metaEl.nextSibling);
+    }
   }).catch(function (err) {
     metaEl.textContent = 'Could not load inspection data (' + err.message + ').';
   });

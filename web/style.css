@@ -221,3 +221,15 @@ html, body {
 @media (max-width: 560px) {
   #drawer { top: auto; left: 0; width: auto; height: 62%; border-left: 0; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
 }
+
+/* counties without data */
+.coverage { display: flex; align-items: center; gap: 7px; margin-top: 6px; }
+.coverage .swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #5f6770;
+  border-radius: 3px;
+  background: repeating-linear-gradient(135deg, rgba(95, 103, 112, 0.55) 0 1.2px, rgba(120, 128, 138, 0.18) 1.2px 6px);
+}
+.popup .county-note { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }

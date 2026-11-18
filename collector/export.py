@@ -14,6 +14,7 @@ import zlib
 
 import db
 
+from counties import CountyIndex
 from portal import SITE
 
 OUT_DIR = os.path.join(db.ROOT, "web", "data")
@@ -81,10 +82,34 @@ def main():
     where = "" if args.all_types else "WHERE permit_type = 'Food Service'"
     rows = conn.execute("SELECT * FROM facilities %s ORDER BY name" % where).fetchall()
 
+    # Which county each geocoded facility is in. Coverage counts every permit type:
+    # a county with only pools in the portal is still a county the portal covers.
+    # See CountyIndex.coverage_geojson for why inspected facilities are counted too.
+    index = CountyIndex()
+    county_of = {}
+    counts, inspected = {}, {}
+    for r in conn.execute("SELECT id, lat, lon, last_inspection_date FROM facilities"
+                          " WHERE lat IS NOT NULL AND lon IS NOT NULL"):
+        geoid = index.lookup(r["lon"], r["lat"])
+        county_of[r["id"]] = geoid
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + 1
+            if r["last_inspection_date"]:
+                inspected[geoid] = inspected.get(geoid, 0) + 1
+
+    coverage = index.coverage_geojson(counts, inspected)
+    uncovered_ids = {c["properties"]["geoid"] for c in coverage["features"] if not c["properties"]["covered"]}
+
     features = []
     for r in rows:
         if r["lat"] is None or r["lon"] is None:
             continue
+        geoid = county_of.get(r["id"])
+        if geoid is None:
+            continue  # geocoded outside Georgia: almost always a bad match
+        if geoid in uncovered_ids and r["last_score"] is None:
+            continue  # a permit with no inspection in a county the portal does not inspect
+
         address = ", ".join(p for p in (r["street"], r["city"]) if p)
         if r["zip"]:
             address += " %s" % r["zip"]
@@ -101,6 +126,7 @@ def main():
                 "date": r["last_inspection_date"],
                 "type": r["permit_type"],
                 "permit": r["permit_number"],
+                "county": index.names[geoid],
             },
         })
 
@@ -108,20 +134,29 @@ def main():
     with open(os.path.join(OUT_DIR, "facilities.geojson"), "w") as f:
         json.dump({"type": "FeatureCollection", "features": features}, f, separators=(",", ":"))
 
+    with open(os.path.join(OUT_DIR, "counties.geojson"), "w") as f:
+        json.dump(coverage, f, separators=(",", ":"))
+    uncovered = sorted(c["properties"]["name"] for c in coverage["features"] if not c["properties"]["covered"])
+
     dates = [r["last_inspection_date"] for r in rows if r["last_inspection_date"]]
     meta = {
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "facilities": len(rows),
         "mapped": len(features),
-        "not_geocoded": len(rows) - len(features),
+        "not_mapped": len(rows) - len(features),
         "newest_inspection": max(dates) if dates else None,
         "oldest_inspection": min(dates) if dates else None,
+        "counties_covered": len(coverage["features"]) - len(uncovered),
+        "counties_uncovered": uncovered,
     }
     with open(os.path.join(OUT_DIR, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
     n_insp, n_files = export_history(conn, {f["properties"]["id"] for f in features})
     print("wrote %d past inspections to %d files in web/data/history/" % (n_insp, n_files))
     print("wrote %d of %d facilities to web/data/facilities.geojson" % (len(features), len(rows)))
+    print("counties with data: %d of %d; without: %s"
+          % (meta["counties_covered"], len(coverage["features"]),
+             ", ".join(uncovered) if len(uncovered) <= 12 else "%d counties" % len(uncovered)))
 
 
 if __name__ == "__main__":

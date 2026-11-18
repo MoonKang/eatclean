@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import collect  # noqa: E402
 import collect_history  # noqa: E402
+import counties  # noqa: E402
 import db  # noqa: E402
 import export  # noqa: E402
 
@@ -171,6 +172,39 @@ class Export(unittest.TestCase):
         self.assertTrue(entry["report"].startswith("https://ga.healthinspections.us/_templates/"))
         self.assertNotIn("inspector", entry)  # inspector names are not published
         self.assertNotIn("repeat", entry["violations"][1])  # false flags are dropped to save space
+
+
+class Counties(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.index = counties.CountyIndex()
+
+    def test_all_georgia_counties_loaded(self):
+        self.assertEqual(len(self.index.names), 159)
+
+    def test_lookup(self):
+        self.assertEqual(self.index.names[self.index.lookup(-84.3880, 33.7490)], "Fulton")      # downtown Atlanta
+        self.assertEqual(self.index.names[self.index.lookup(-83.9880, 33.9562)], "Gwinnett")    # Lawrenceville
+        self.assertEqual(self.index.names[self.index.lookup(-81.0998, 32.0809)], "Chatham")     # Savannah
+        self.assertIsNone(self.index.lookup(-86.8025, 33.5207))                                 # Birmingham, AL
+
+    def test_ring_with_hole(self):
+        square = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]
+        hole = [[4, 4], [6, 4], [6, 6], [4, 6], [4, 4]]
+        self.assertTrue(counties._in_ring(2, 2, square))
+        self.assertTrue(counties._in_ring(5, 5, hole))
+        self.assertFalse(counties._in_ring(11, 5, square))
+
+    def test_coverage_flags(self):
+        # Fulton: most listed facilities inspected. Gwinnett: a few stray permits, no scores.
+        cov = self.index.coverage_geojson({"13121": 3, "13135": 80}, {"13121": 2, "13135": 5})
+        props = {f["properties"]["name"]: f["properties"] for f in cov["features"]}
+        self.assertTrue(props["Fulton"]["covered"])
+        self.assertEqual((props["Fulton"]["facilities"], props["Fulton"]["inspected"]), (3, 2))
+        self.assertFalse(props["Gwinnett"]["covered"])
+        self.assertFalse(props["Chatham"]["covered"])  # nothing listed at all
+        self.assertEqual(props["Gwinnett"]["source"], "GNR Public Health")
+        self.assertNotIn("source", props["Fulton"])
 
 
 if __name__ == "__main__":
