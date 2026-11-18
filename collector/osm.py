@@ -17,13 +17,21 @@ import json
 import math
 import re
 import sys
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
 
 import db
 
-OVERPASS = "https://overpass-api.de/api/interpreter"
+# Public Overpass servers are often busy (HTTP 429/502/504) or slow to reach from
+# cloud networks, so each is tried in turn, twice, until one answers.
+OVERPASS_SERVERS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
 AMENITIES = "restaurant|fast_food|cafe|bar|pub|ice_cream|food_court|biergarten"
 QUERY = """[out:json][timeout:300];
 area["ISO3166-2"="US-GA"][admin_level=4]->.ga;
@@ -94,12 +102,24 @@ def label(amenity, cuisine):
     return AMENITY_LABELS.get(amenity)
 
 
-def fetch():
+def fetch(servers=OVERPASS_SERVERS, attempts=2, wait=30):
     body = urllib.parse.urlencode({"data": QUERY}).encode()
-    req = urllib.request.Request(OVERPASS, data=body,
-                                 headers={"User-Agent": "ga-inspection-map/0.1 (weekly; restaurant categories)"})
-    with urllib.request.urlopen(req, timeout=400) as resp:
-        return json.loads(resp.read().decode("utf-8"))["elements"]
+    errors = []
+    for attempt in range(attempts):
+        for url in servers:
+            req = urllib.request.Request(url, data=body, headers={
+                "User-Agent": "ga-inspection-map/0.1 (weekly; restaurant categories)"})
+            try:
+                with urllib.request.urlopen(req, timeout=400) as resp:
+                    elements = json.loads(resp.read().decode("utf-8"))["elements"]
+                print("fetched %d places from %s" % (len(elements), url.split("/")[2]))
+                return elements
+            except Exception as e:  # busy, unreachable or a bad response: try the next one
+                errors.append("%s: %s" % (url.split("/")[2], e))
+                print("  %s failed: %s" % (url.split("/")[2], e), file=sys.stderr)
+        if attempt + 1 < attempts:
+            time.sleep(wait)
+    raise RuntimeError("no Overpass server answered (%s)" % "; ".join(errors[-len(servers):]))
 
 
 def store(conn, elements, now):

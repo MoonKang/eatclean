@@ -88,7 +88,9 @@ html, body {
   cursor: pointer;
 }
 
-.grades button[aria-pressed="false"] { opacity: 0.45; }
+/* Once a grade is picked, the others fade and the picked ones are outlined. */
+.grades.filtering button[aria-pressed="false"] { opacity: 0.45; }
+.grades button[aria-pressed="true"] { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
 .grades .dot { width: 10px; height: 10px; border-radius: 50%; }
 .grades .count { color: var(--muted); }
 
@@ -110,9 +112,53 @@ html, body {
 .popup .when { color: #60676f; font-size: 13px; }
 .popup a { display: inline-block; margin-top: 8px; font-size: 13px; }
 
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.panel-close, .menu-toggle { display: none; }
+
 @media (max-width: 560px) {
-  .panel { top: 8px; left: 8px; right: 8px; width: auto; max-width: none; padding: 10px 12px; }
+  /* Phones: the panel is hidden behind a menu button so the map gets the screen. */
+  .menu-toggle {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    cursor: pointer;
+  }
+  .menu-dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: #2f6fde; }
+  .panel {
+    display: none;
+    z-index: 4;
+    top: 8px; left: 8px; right: 8px;
+    width: auto; max-width: none;
+    max-height: calc(100% - 16px);
+    overflow: auto;
+    padding: 10px 12px;
+  }
+  body.panel-open .panel { display: block; }
+  body.panel-open .menu-toggle { display: none; }
   .panel h1 { font-size: 15px; margin-bottom: 8px; }
+  .panel-close {
+    display: block;
+    flex: none;
+    width: 32px; height: 32px;
+    margin: -6px -6px 0 0;
+    font-size: 22px; line-height: 1;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
 }
 
 @media (prefers-color-scheme: dark) {

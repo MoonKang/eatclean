@@ -68,6 +68,7 @@
     select.addEventListener('change', function () {
       month = select.value;
       if (popup) popup.remove();
+      updateMenuDot();
       refresh();
     });
   }
@@ -224,11 +225,24 @@
     all.forEach(function (f) { counts[f.properties.grade] = (counts[f.properties.grade] || 0) + 1; });
     var wrap = document.getElementById('grades');
     wrap.textContent = '';
+    // Clicking a grade shows only that grade; clicking more adds them.
+    // With none selected, every grade is shown.
+    var selected = {};
+    var buttons = [];
+    function apply() {
+      var any = GRADES.some(function (g) { return selected[g.key]; });
+      GRADES.forEach(function (g) { active[g.key] = !any || !!selected[g.key]; });
+      buttons.forEach(function (x) { x.b.setAttribute('aria-pressed', String(!!selected[x.key])); });
+      wrap.classList.toggle('filtering', any);
+      updateMenuDot();
+      refresh();
+    }
     GRADES.forEach(function (g) {
       if (!counts[g.key]) return;
       var b = el('button');
       b.type = 'button';
-      b.setAttribute('aria-pressed', 'true');
+      b.setAttribute('aria-pressed', 'false');
+      buttons.push({ b: b, key: g.key });
       b.title = g.range ? 'Score ' + g.range : 'No score on record';
       var dot = el('span', 'dot');
       dot.style.background = g.color;
@@ -236,9 +250,8 @@
       b.appendChild(el('span', null, g.label));
       b.appendChild(el('span', 'count', counts[g.key].toLocaleString()));
       b.addEventListener('click', function () {
-        active[g.key] = !active[g.key];
-        b.setAttribute('aria-pressed', String(active[g.key]));
-        refresh();
+        selected[g.key] = !selected[g.key];
+        apply();
       });
       wrap.appendChild(b);
     });
@@ -318,12 +331,29 @@
     map.flyTo({ center: lngLat, zoom: 16, offset: [wide ? (panel.offsetWidth + 12) / 2 : 0, 40] });
   }
 
+  // --- phone menu -------------------------------------------------------------
+  var menuButton = document.getElementById('menu-toggle');
+  function isPhone() { return window.matchMedia('(max-width: 560px)').matches; }
+  function setPanel(open) {
+    document.body.classList.toggle('panel-open', open);
+    menuButton.setAttribute('aria-expanded', String(open));
+  }
+  menuButton.addEventListener('click', function () { setPanel(true); });
+  document.getElementById('panel-close').addEventListener('click', function () { setPanel(false); });
+  // A dot on the menu button says some filter is on while the panel is closed.
+  function updateMenuDot() {
+    var filtering = document.getElementById('grades').classList.contains('filtering') ||
+                    !!document.getElementById('month').value;
+    document.querySelector('.menu-dot').hidden = !filtering;
+  }
+
   function setupSearch() {
     var input = document.getElementById('search');
     var list = document.getElementById('results');
 
     function pick(f) {
       list.hidden = true;
+      if (isPhone()) setPanel(false);
       input.value = f.properties.name;
       flyToVisible(f.geometry.coordinates);
       showPopup(f);
